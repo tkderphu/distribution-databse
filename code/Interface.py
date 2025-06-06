@@ -1,10 +1,18 @@
-
+#!/usr/bin/python2.7
+#
+# Interface for the assignement
+#
 
 import psycopg2
-def getConnection(user='postgres', password='quangphu', dbname='postgres'):
+
+DATABASE_NAME = 'dds_assgn1'
+
+
+def getopenconnection(user='postgres', password='1234', dbname='postgres'):
     return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
 
-def LoadRatings(ratingsTableName, ratingsFilePath, openConnection):
+
+def loadratings(ratingsTableName, ratingsFilePath, openConnection): 
     """
     Tải dữ liệu từ @ratingsTableName vào cơ sở dữ diệu có tên bảng là @ratingsFilePath
     """
@@ -18,9 +26,9 @@ def LoadRatings(ratingsTableName, ratingsFilePath, openConnection):
     # Tạo bảng @ratingsTableName
     cursor.execute(f"""
     CREATE TABLE {ratingsTableName} (
-        UserID INT,
-        MovieID INT,
-        Rating FLOAT
+        userid INT,
+        movieid INT,
+        rating FLOAT
     )
     """)
     
@@ -35,24 +43,22 @@ def LoadRatings(ratingsTableName, ratingsFilePath, openConnection):
                 
                 # Insert vào bảng
                 cursor.execute(
-                    f"INSERT INTO {ratingsTableName} (UserID, MovieID, Rating) VALUES (%s, %s, %s)",
+                    f"INSERT INTO {ratingsTableName} (userid, movieid, rating) VALUES (%s, %s, %s)",
                     (user_id, movie_id, rating)
                 )
     
     conn.commit()
     print(f"Tải dữ liệu từ file {ratingsFilePath} vào bảng {ratingsTableName} thành công.")
 
-def Range_Partition(ratingsTableName, numberPartitions, openConnection):
+def rangepartition(ratingsTableName, numberPartitions, openConnection):
     """
         Partition bảng @ratingsTableName thành @numberPartition khoảng giá trị đồng đều của thuộc tính rating
     """
     conn = openConnection
     cursor = conn.cursor()
     
-    # Lấy giá trị thấp và cao nhất của bảng @ratingsTableName
-    cursor.execute(f"SELECT MIN(Rating), MAX(Rating) FROM {ratingsTableName}")
-    min_rating, max_rating = cursor.fetchone()
     
+    min_rating, max_rating = 0, 5
     # tính giá trị đồng đều mỗi partition
     range_size = (max_rating - min_rating) / numberPartitions
     
@@ -69,8 +75,8 @@ def Range_Partition(ratingsTableName, numberPartitions, openConnection):
     # Tại mỗi partition tính các khoảng giá trị
     for i in range(numberPartitions):
         # Tính khoảng giá trị rating
-        lower_bound = min_rating + (i * range_size)
-        upper_bound = min_rating + ((i + 1) * range_size)
+        lower_bound =   (i * range_size)
+        upper_bound =   ((i + 1) * range_size)
         
         # Nếu partition là partition cuối cùng thì lấy giá trị lớn nhất là max_rating
         if i == numberPartitions - 1:
@@ -81,9 +87,9 @@ def Range_Partition(ratingsTableName, numberPartitions, openConnection):
         cursor.execute(f"DROP TABLE IF EXISTS {partition_name}")
         cursor.execute(f"""
         CREATE TABLE {partition_name} (
-            UserID INT,
-            MovieID INT,
-            Rating FLOAT
+            userid INT,
+            movieid INT,
+            rating FLOAT
         )
         """)
         
@@ -99,20 +105,20 @@ def Range_Partition(ratingsTableName, numberPartitions, openConnection):
             cursor.execute(f"""
             INSERT INTO {partition_name}
             SELECT * FROM {ratingsTableName}
-            WHERE Rating >= {lower_bound} AND Rating <= {upper_bound}
+            WHERE rating >= {lower_bound} AND rating <= {upper_bound}
             """)
         else:
             # Đối với các partiton khác thì loại bỏ lower_bound
             cursor.execute(f"""
             INSERT INTO {partition_name}
             SELECT * FROM {ratingsTableName}
-            WHERE Rating > {lower_bound} AND Rating <= {upper_bound}
+            WHERE rating > {lower_bound} AND rating <= {upper_bound}
             """)
     
     conn.commit()
     print(f"Tạo thành công {numberPartitions} partition từ bảng {ratingsTableName} thành công.")
 
-def RoundRobin_Partition(ratingsTableName, numberPartitions, openConnection):
+def roundrobinpartition(ratingsTableName, numberPartitions, openConnection):
     """
         Phân mảnh vòng tròn:
         Có 5 partition:
@@ -150,14 +156,14 @@ def RoundRobin_Partition(ratingsTableName, numberPartitions, openConnection):
         cursor.execute(f"DROP TABLE IF EXISTS {partition_name}")
         cursor.execute(f"""
         CREATE TABLE {partition_name} (
-            UserID INT,
-            MovieID INT,
-            Rating FLOAT
+            userid INT,
+            movieid INT,
+            rating FLOAT
         )
         """)
     
      
-    cursor.execute(f"SELECT UserID, MovieID, Rating FROM {ratingsTableName}")
+    cursor.execute(f"SELECT userid, movieid, rating FROM {ratingsTableName}")
     all_rows = cursor.fetchall()
     
     # Insert vào partition tương ứng
@@ -173,17 +179,15 @@ def RoundRobin_Partition(ratingsTableName, numberPartitions, openConnection):
     cursor.execute("UPDATE rrobin_metadata SET next_partition = %s", (len(all_rows) % numberPartitions,))
     conn.commit()
     print(f"Tạo thành công {numberPartitions} phân mảnh vòng tròn.")
-    
 
-
-def RoundRobin_Insert(ratingsTableName, userId, itemId, rating, openConnection):
+def roundrobininsert(ratingsTableName, userid, itemId, rating, openConnection):
     conn = openConnection
     cursor = conn.cursor()
 
     # Chèn vào bảng gốc
     cursor.execute(
-        f"INSERT INTO {ratingsTableName} (UserID, MovieID, Rating) VALUES (%s, %s, %s)",
-        (userId, itemId, rating)
+        f"INSERT INTO {ratingsTableName} (userid, movieid, rating) VALUES (%s, %s, %s)",
+        (userid, itemId, rating)
     )
     
     cursor.execute("SELECT partition_count, next_partition FROM rrobin_metadata")
@@ -191,8 +195,8 @@ def RoundRobin_Insert(ratingsTableName, userId, itemId, rating, openConnection):
 
     partition_name = f"rrobin_part{next_partition}"
     cursor.execute(
-        f"INSERT INTO {partition_name} (UserID, MovieID, Rating) VALUES (%s, %s, %s)",
-        (userId, itemId, rating)
+        f"INSERT INTO {partition_name} (userid, movieid, rating) VALUES (%s, %s, %s)",
+        (userid, itemId, rating)
     )
 
     # Cập nhật partiton_next
@@ -201,13 +205,15 @@ def RoundRobin_Insert(ratingsTableName, userId, itemId, rating, openConnection):
 
     conn.commit()
     print("Chèn thành công data theo phân mảnh vòng tròn")
-def Range_Insert(ratingsTableName, userId, itemId, rating, openConnection):
-    conn = getConnection()
+
+
+def rangeinsert(ratingsTableName, userid, itemId, rating, openConnection):
+    conn = openConnection
     cursor = conn.cursor()
     #Chèn vào bảng gốc
     cursor.execute(
-        f"INSERT INTO {ratingsTableName} (UserId, MovieId, Rating) VALUES (%s, %s, %s)",
-        (userId, itemId, rating)
+        f"INSERT INTO {ratingsTableName} (userid, movieid, rating) VALUES (%s, %s, %s)",
+        (userid, itemId, rating)
     )
 
     #Lấy metadata của partition trong vùng: (min_value, max_value]
@@ -233,8 +239,8 @@ def Range_Insert(ratingsTableName, userId, itemId, rating, openConnection):
         
         # Chèn vào partition tương ứng
         cursor.execute(
-            f"INSERT INTO {partition_name} (UserID, MovieID, Rating) VALUES (%s, %s, %s)",
-            (userId, itemId, rating)
+            f"INSERT INTO {partition_name} (userid, movieid, rating) VALUES (%s, %s, %s)",
+            (userid, itemId, rating)
         )
 
         conn.commit()
@@ -243,5 +249,37 @@ def Range_Insert(ratingsTableName, userId, itemId, rating, openConnection):
         conn.rollback()
         print("Error: không tìm thấy phân vùng phù hợp")
 
-    
-    
+def create_db(dbname):
+    """
+    We create a DB by connecting to the default user and database of Postgres
+    The function first checks if an existing database exists for a given name, else creates it.
+    :return:None
+    """
+    # Connect to the default database
+    con = getopenconnection(dbname='postgres')
+    con.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+    cur = con.cursor()
+
+    # Check if an existing database with the same name exists
+    cur.execute('SELECT COUNT(*) FROM pg_catalog.pg_database WHERE datname=\'%s\'' % (dbname,))
+    count = cur.fetchone()[0]
+    if count == 0:
+        cur.execute('CREATE DATABASE %s' % (dbname,))  # Create the database
+    else:
+        print('A database named {0} already exists'.format(dbname))
+
+    # Clean up
+    cur.close()
+    con.close()
+
+def count_partitions(prefix, openconnection):
+    """
+    Function to count the number of tables which have the @prefix in their name somewhere.
+    """
+    con = openconnection
+    cur = con.cursor()
+    cur.execute("select count(*) from pg_stat_user_tables where relname like " + "'" + prefix + "%';")
+    count = cur.fetchone()[0]
+    cur.close()
+
+    return count
